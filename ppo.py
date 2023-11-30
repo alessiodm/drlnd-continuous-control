@@ -15,6 +15,7 @@ NUM_MINI_BATCHES = 4
 # TODO: We should rename this to "experiences" or something.
 NUM_AGENTS = 20 # TODO: get this from the environment
 ACTION_SIZE = -1 # TODO: get this appropriately
+GAMMA=0.995
 
 class PPO:
     """PPO implementation."""
@@ -77,11 +78,15 @@ class PPO:
         # TODO: Keep track of the scores for each agent?
         return states, values, actions, logprobs, rewards, dones
 
-    def advantages_and_returns(self, values):
-        """TODO:"""
-        # Here we could implement GAE.
-        advantages = []
-        returns = []
+    def advantages_and_returns(self, values, rewards):
+        """Computes returns and advantages for an episode."""
+        # TODO: Consider implementing GAE here instead.
+        discounts = GAMMA ** np.arange(len(rewards))
+        returns = np.asarray(rewards) * discounts[:, np.newaxis]
+        advantages = returns - values
+        # TODO: Check whether normalizing advantages makes a difference, and whether it is more
+        #  performant to do so at the mini-batch level instead.
+        # advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         return advantages, returns
 
     def env_reset(self):
