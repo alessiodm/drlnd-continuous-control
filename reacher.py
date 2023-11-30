@@ -3,7 +3,9 @@ from distutils.util import strtobool
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import random
 import sys
+import torch
 from unityagents import UnityEnvironment
 
 from agent import Agent
@@ -27,7 +29,6 @@ class ReacherWorld:
         """
         suffix = "" if visual else "_NoVis"
         env_file = f"unity_env/Reacher_Linux_Multi{suffix}/Reacher.x86_64"
-        self.seed = seed
         self.env = UnityEnvironment(file_name=env_file)
         self.brain_name = self.env.brain_names[0]
         self.brain = self.env.brains[self.brain_name]
@@ -37,8 +38,13 @@ class ReacherWorld:
         states = env_info.vector_observations
         self.state_size = states.shape[1]
         self.checkpoint = checkpoint
+        # Setup deterministic seed across the board.
+        random.seed(seed)
         np.random.seed(seed)
-        print() # Just for nicer print considering Unity outputs.
+        torch.manual_seed(args.seed)
+        torch.backends.cudnn.deterministic = True
+        # Just a nicer print newline considering Unity outputs.
+        print()
 
     def simulate(self, agent: Agent):
         env = self.env
