@@ -9,6 +9,7 @@ import torch
 from unityagents import UnityEnvironment
 
 from agent import Agent
+from ppo import PPO
 
 class ReacherWorld:
     """A world full of reachers!
@@ -41,7 +42,7 @@ class ReacherWorld:
         # Setup deterministic seed across the board.
         random.seed(seed)
         np.random.seed(seed)
-        torch.manual_seed(args.seed)
+        torch.manual_seed(seed)
         torch.backends.cudnn.deterministic = True
         # Just a nicer print newline considering Unity outputs.
         print()
@@ -68,7 +69,10 @@ class ReacherWorld:
         print('Total score (averaged over agents) this episode: {}'.format(np.mean(scores)))
 
     def train(self, agent: Agent):
-        raise Exception('Not implemented yet')
+        """Train a PPO agent in the reacher world."""
+        ppo = PPO(self.env, agent)
+        scores = ppo.train()
+        return scores
 
     def close(self):
         self.env.close()
@@ -121,11 +125,12 @@ if __name__ == "__main__":
 
         # Simulate the pre-trained agent.
         world = ReacherWorld(visual=True)
-        world.simulate(Agent())
+        world.simulate(Agent(world.state_size, world.action_size))
 
     elif args.train:
         world = ReacherWorld(checkpoint=True)
-        scores = world.train(Agent())
+        scores = world.train(Agent(world.state_size, world.action_size))
+        print(f'Training complete! Scores: {scores}')
 
 
 
