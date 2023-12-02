@@ -28,7 +28,7 @@ class PPO:
         self.brain = self.env.brains[self.brain_name]
         self.action_size = self.brain.vector_action_space_size
         env_info = self.env.reset(train_mode=False)[self.brain_name]
-        self.num_agents = len(env_info.agents) # TODO: We should rename this to "experiences" or something.
+        self.num_bots = len(env_info.agents)
         states = env_info.vector_observations
         self.state_size = states.shape[1]
 
@@ -41,7 +41,7 @@ class PPO:
         # We keep this strategy b/c the Udacity project rubric specifically requires
         # averaging all agents per episode for the success criteria.
         n_episode = 1
-        scores = torch.zeros((0, self.num_agents))
+        scores = torch.zeros((0, self.num_bots))
         next_states = torch.Tensor(self.env_reset()).to(device)   # get the initial state (for each agent)
         while True:
             # TODO: anneal learning rate?
@@ -53,7 +53,7 @@ class PPO:
             next_states = states[-1]
             scores = torch.cat((scores, rewards), 0) # TODO: Weird the first iteration goes up to 1250...
 
-            batch_size = self.num_agents * ROLLOUT_SIZE
+            batch_size = self.num_bots * ROLLOUT_SIZE
             mini_batch_size = int(batch_size // NUM_MINI_BATCHES)
 
             # Bootstrapping value and compute advantages and returns.
@@ -90,7 +90,7 @@ class PPO:
                 print(f'\told_approx_kl: {old_approx_kl:.2f}, approx_kl: {approx_kl:.2f}, clipfracs: {np.mean(clipfracs):.2f}')
                 print()
                 n_episode += 1
-                scores = torch.zeros((0, self.num_agents))
+                scores = torch.zeros((0, self.num_bots))
                 if n_episode > NUM_EPISODES:
                     break
  
@@ -98,7 +98,7 @@ class PPO:
         #
         # https://knowledge.udacity.com/questions/558456
         #
-        batch_dim = (ROLLOUT_SIZE, self.num_agents)
+        batch_dim = (ROLLOUT_SIZE, self.num_bots)
 
         states_list = torch.zeros(batch_dim + (self.state_size,)).to(device)
         actions_list = torch.zeros(batch_dim + (self.action_size,)).to(device)
