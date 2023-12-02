@@ -8,9 +8,8 @@ from agent import Agent, MiniBatch
 
 # TODO: Make these constants configurable
 NUM_EPISODES = 300
-MAX_STEPS_PER_EPISODE = 1001 # 5_000 # TODO: This turns out to always be 1000???
 NUM_UPDATE_EPOCHS = 10
-NUM_MINI_BATCHES = 10
+NUM_MINI_BATCHES = 100
 # GAMMA=0.995
 GAMMA=0.99
 GAE_LAMBDA=0.95
@@ -42,6 +41,7 @@ class PPO:
         # We keep this strategy b/c the Udacity project rubric specifically requires
         # averaging all agents per episode for the success criteria.
         n_episode = 1
+        scores = torch.zeros((0, self.num_agents))
         next_states = torch.Tensor(self.env_reset()).to(device)   # get the initial state (for each agent)
         while True:
             # TODO: anneal learning rate?
@@ -51,6 +51,7 @@ class PPO:
             # TODO: Improve explanation, pointing to the lecture slides about noise.            
             states, values, actions, logprobs, rewards, dones = self.collect_trajectories(next_states)
             next_states = states[-1]
+            scores = torch.cat((scores, rewards), 0) # TODO: Weird the first iteration goes up to 1250...
 
             batch_size = self.num_agents * ROLLOUT_SIZE
             mini_batch_size = int(batch_size // NUM_MINI_BATCHES)
@@ -84,11 +85,12 @@ class PPO:
                         clipfracs += [((logratio.exp() - 1.0).abs() > 0.1).float().mean().item()]
 
             if np.any(dones.numpy()):
-                print(f'Episode n.{n_episode} completed. Avg score: {rewards.sum(0).mean()}')
+                print(f'Episode n.{n_episode} completed. Avg score: {scores.sum(0).mean()}')
                 print(f'\tppo_loss: {np.mean(ppo_losses)}, pg_loss: {np.mean(pg_losses)}, v_loss: {np.mean(v_losses)}')
                 print(f'\told_approx_kl: {old_approx_kl:.2f}, approx_kl: {approx_kl:.2f}, clipfracs: {np.mean(clipfracs):.2f}')
                 print()
                 n_episode += 1
+                scores = torch.zeros((0, self.num_agents))
                 if n_episode > NUM_EPISODES:
                     break
  
@@ -105,7 +107,6 @@ class PPO:
         rewards_list = torch.zeros(batch_dim).to(device)
         dones_list = torch.zeros(batch_dim).to(device)
 
-        # states = torch.Tensor(self.env_reset()).to(device)   # get the initial state (for each agent)
         states = init_states
         for step in range(ROLLOUT_SIZE):
             # Do not track gradients on policy rollout.
