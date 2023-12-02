@@ -7,12 +7,6 @@ import torch.optim as optim
 from collections import namedtuple
 from torch.distributions.normal import Normal
 
-CLIP_COEFF=0.1
-# ENT_COEFF=0.01
-# VF_COEFF=0.5
-ENT_COEFF=0.0
-VF_COEFF=1.0
-MAX_GRAD_NORM=0.75
 
 MiniBatch = namedtuple("MiniBatch", field_names=["states", "actions", "logprobs",
                                                  "advantages", "returns"])
@@ -62,27 +56,39 @@ class Agent(nn.Module):
         action_std = torch.exp(action_logstd)
         return Normal(action_mean, action_std)
 
-    def learn(self, batch: MiniBatch):
+    def learn(self, batch: MiniBatch, entropy_coeff=0.0, clip_coeff=0.1, max_grad_norm=0.75):
         newlogprobs, entropy = self.eval_action(batch.states, batch.actions)
 
         logratio = newlogprobs - batch.logprobs
         ratio = logratio.exp()
-        clip = torch.clamp(ratio, 1 - CLIP_COEFF, 1 + CLIP_COEFF)
+        clipped_ratio = torch.clamp(ratio, 1 - clip_coeff, 1 + clip_coeff)
         advantages = batch.advantages
 
         # Policy loss.
-        pg_loss = torch.max(-advantages * ratio, -advantages * clip).mean()
-
-        newvalues = self.get_value(batch.states).view(-1)
-
-        v_loss = F.mse_loss(newvalues, batch.returns)
-        entropy_loss = entropy.mean()
-
-        ppo_loss = pg_loss + VF_COEFF * v_loss - ENT_COEFF * entropy_loss
+        L_entropy = entropy_coeff * entropy.mean()
+        L_clipped = -torch.min(advantages * ratio, advantages * clipped_ratio).mean()
+        L_actor = L_clipped - L_entropy
 
         self.optimizer.zero_grad()
-        ppo_loss.backward()
-        nn.utils.clip_grad_norm_(self.parameters(), MAX_GRAD_NORM)
+        L_actor.backward()
+        nn.utils.clip_grad_norm_(self.actor_mean.parameters(), max_grad_norm)
         self.optimizer.step()
 
-        return (ppo_loss, pg_loss, v_loss, logratio)
+        # Value loss
+        newvalues = self.get_value(batch.states).view(-1)
+        L_critic = F.mse_loss(newvalues, batch.returns)
+        
+        self.optimizer.zero_grad()
+        L_critic.backward()
+        nn.utils.clip_grad_norm_(self.critic.parameters(), max_grad_norm)
+        self.optimizer.step()
+
+        # PPO loss
+        # vf_coeff = 0.5 # This works better if 1.0 in this case
+        # L_ppo = L_actor + L_critic * VF_COEFF
+        # self.optimizer.zero_grad()
+        # L_ppo.backward()
+        # nn.utils.clip_grad_norm_(self.parameters(), MAX_GRAD_NORM)
+        # self.optimizer.step()
+
+        return (torch.Tensor(1), L_actor, L_critic, logratio)
