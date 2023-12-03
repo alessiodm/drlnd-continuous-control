@@ -66,7 +66,7 @@ class ReacherWorld:
                 break
         print('Total score (averaged over agents) this episode: {}'.format(np.mean(scores)))
 
-    def train(self, agent: Agent, max_episodes=3, n_update_epochs=10,
+    def train(self, agent: Agent, max_episodes=314, n_update_epochs=10,
               n_mini_batches=100, gae_enabled=True):
         """Train a PPO agent in the reacher world."""
         ppo = PPO(self.env, agent, max_episodes=max_episodes)
