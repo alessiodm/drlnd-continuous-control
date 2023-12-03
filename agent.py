@@ -34,7 +34,8 @@ class LearningBatch:
 
 
 class Agent(nn.Module):
-    def __init__(self, state_size, action_size, lr=2.5e-4, weight_mul=1e-3):
+    def __init__(self, state_size, action_size, lr=2.5e-4, weight_mul=1e-3,
+                 preload_file: str = None):
         super().__init__()
 
         def layer_init(layer, std=np.sqrt(2)):
@@ -62,6 +63,10 @@ class Agent(nn.Module):
 
         self.actor_logstd = nn.Parameter(torch.zeros(1, action_size))
         self.optimizer = optim.Adam(self.parameters(), lr=lr, eps=1e-5)
+
+        if preload_file is not None:
+            print(f'Loading pre-trained model: {preload_file}')
+            self.load_state_dict(torch.load(preload_file))
 
     def get_value(self, states):
         return self.critic(states)
@@ -121,3 +126,7 @@ class Agent(nn.Module):
         # L_ppo.backward()
         # nn.utils.clip_grad_norm_(self.parameters(), MAX_GRAD_NORM)
         # self.optimizer.step()
+
+    def save(self):
+        """Save the agent weights in the 'weights.pth' file."""
+        torch.save(self.state_dict(), 'weights.pth')

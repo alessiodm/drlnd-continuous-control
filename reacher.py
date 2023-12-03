@@ -20,7 +20,7 @@ class ReacherWorld:
     and simulate an agent via PPO.
     """
 
-    def __init__(self, visual=False, seed=0, checkpoint=False):
+    def __init__(self, visual=False, seed=0, persist=False):
         """Initialize the reacher world.
 
         Params:
@@ -39,7 +39,7 @@ class ReacherWorld:
         self.num_agents = len(env_info.agents)
         states = env_info.vector_observations
         self.state_size = states.shape[1]
-        self.checkpoint = checkpoint
+        self.persist = persist
         # Setup deterministic seed across the board.
         random.seed(seed)
         np.random.seed(seed)
@@ -51,31 +51,35 @@ class ReacherWorld:
     def simulate(self, agent: Agent):
         env = self.env
         brain_name = self.brain_name
-        num_agents = self.num_agents
-        action_size = self.action_size
         env_info = env.reset(train_mode=False)[brain_name]     # reset the environment    
-        states = env_info.vector_observations                  # get the current state (for each agent)
+        states = torch.Tensor(env_info.vector_observations)    # get the current state (for each agent)
         scores = np.zeros(self.num_agents)                     # initialize the score (for each agent)
         while True:
-            actions = np.random.randn(num_agents, action_size) # select an action (for each agent)
-            actions = np.clip(actions, -1, 1)                  # all actions between -1 and 1
+            actions, _ = agent.sample_action(states)           # select an action (for each agent)
+            actions = torch.clamp(actions, -1, 1).numpy()      # all actions between -1 and 1
             env_info = env.step(actions)[brain_name]           # send all actions to tne environment
             next_states = env_info.vector_observations         # get next state (for each agent)
-            rewards = env_info.rewards                         # get reward (for each agent)
             dones = env_info.local_done                        # see if episode finished
             scores += env_info.rewards                         # update the score (for each agent)
-            states = next_states                               # roll over states to next time step
+            states = torch.Tensor(next_states)                 # roll over states to next time step
             if np.any(dones):                                  # exit loop if episode finished
                 break
         print('Total score (averaged over agents) this episode: {}'.format(np.mean(scores)))
 
-    def train(self, agent: Agent):
+    def train(self, agent: Agent, max_episodes=3, n_update_epochs=10,
+              n_mini_batches=100, gae_enabled=True):
         """Train a PPO agent in the reacher world."""
-        ppo = PPO(self.env, agent)
-        scores = ppo.train()
+        ppo = PPO(self.env, agent, max_episodes=max_episodes)
+        scores = ppo.train(n_update_epochs, n_mini_batches, gae_enabled, self.persist)
         return scores
-        # ppoc = PPOC(self.env)
-        # ppoc.train()
+
+    def new_agent(self, weight_mul=1e-3, preload_file=None):
+        """Create a new raw agent for the reacher world.
+
+        Shortcut and convenient method to create agents tailored to the reacher world environment.
+        """
+        return Agent(self.state_size, self.action_size,
+                     weight_mul=weight_mul, preload_file=preload_file)
 
     def close(self):
         self.env.close()
@@ -112,42 +116,26 @@ if __name__ == "__main__":
         sys.exit(1)
 
     if args.simulation:
-        # print("Showing the plot of the scores achieved during learning.")
-        # print("Close the plot window to watch the simulation of the agent.")
+        print("Showing the plot of the scores achieved during learning.")
+        print("Close the plot window to watch the simulation of the agent.")
 
-        # # Show the plot of the scores during learning
-        # scores = np.loadtxt(f'scores_{args.simulation}.csv', delimiter=',', dtype=np.int16)
-        # avgs = pd.Series(scores).rolling(100).mean()
-        # x = np.arange(len(scores))
-        # plt.figure('Episode scores')
-        # plt.plot(x, scores, label='Scores')
-        # plt.plot(x, avgs, 'r', label='Running average')
-        # plt.ylabel('Score')
-        # plt.xlabel('Episode #')
-        # plt.show()
+        # Show the plot of the scores during learning
+        scores = np.loadtxt(f'scores_{args.simulation}.csv', delimiter=',', dtype=np.float)
+        avgs = pd.Series(scores).rolling(100).mean()
+        x = np.arange(len(scores))
+        plt.figure('Episode scores')
+        plt.plot(x, scores, label='Scores')
+        plt.plot(x, avgs, 'r', label='Running average')
+        plt.ylabel('Score')
+        plt.xlabel('Episode #')
+        plt.show()
 
         # Simulate the pre-trained agent.
         world = ReacherWorld(visual=True)
-        world.simulate(Agent(world.state_size, world.action_size))
+        agent = world.new_agent(preload_file=f'weights_{args.simulation}.pth')
+        world.simulate(agent)
 
     elif args.train:
-        world = ReacherWorld(checkpoint=True)
-        scores = world.train(Agent(world.state_size, world.action_size))
-        print(f'Training complete! Scores: {scores}')
-
-
-
-
-# # number of agents
-# num_agents = len(env_info.agents)
-# print('Number of agents:', num_agents)
-
-# # size of each action
-# action_size = brain.vector_action_space_size
-# print('Size of each action:', action_size)
-
-# # examine the state space 
-# states = env_info.vector_observations
-# state_size = states.shape[1]
-# print('There are {} agents. Each observes a state with length: {}'.format(states.shape[0], state_size))
-# print('The state for the first agent looks like:', states[0])
+        world = ReacherWorld(persist=True)
+        agent = world.new_agent()
+        scores = world.train(agent)

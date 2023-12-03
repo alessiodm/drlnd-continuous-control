@@ -32,7 +32,8 @@ class PPO:
         self.episode_len     = self.rollout_sizes.sum()
         assert self.episode_len == 1001
 
-    def train(self, n_update_epochs=10, n_mini_batches=100, gae_enabled=True) -> List[float]:
+    def train(self, n_update_epochs=10, n_mini_batches=100,
+              gae_enabled=True, persist=False) -> List[float]:
         # Using episodes and max-steps-per-episode have many downsides, see:
         #   https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/
         self.n_episode = 1
@@ -62,6 +63,10 @@ class PPO:
             self.ep_agent_scores = torch.cat((self.ep_agent_scores, segment.rewards), 0)
             if self.training_checkpoint(segment):
                 break
+
+        if persist:
+            self.agent.save()
+            np.savetxt("scores.csv", np.asarray(self.ep_mean_scores), delimiter=",")
         
         return self.ep_mean_scores
  
