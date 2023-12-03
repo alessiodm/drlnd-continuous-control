@@ -32,23 +32,25 @@ class PPO:
         self.episode_len     = self.rollout_sizes.sum()
         assert self.episode_len == 1001
 
-    def train(self, n_update_epochs: int = 10, n_mini_batches: int = 100) -> List[float]:
+    def train(self, n_update_epochs=10, n_mini_batches=100, gae_enabled=True) -> List[float]:
         # Using episodes and max-steps-per-episode have many downsides, see:
         #   https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/
         self.n_episode = 1
         self.ep_agent_scores = torch.zeros((0, self.num_bots)).detach()
-        start_state = torch.Tensor(self.env_reset()).to(device)   # get the initial state (for each agent)
+        # get the initial state (for each agent / bot)
+        start_state = torch.Tensor(self.env_reset()).to(device)
 
         while True:
-            # Policy rollout phase.
+            # Policy rollout.
             # Get more trajectories from many agents to reduce noise.
             # TODO: Improve explanation, pointing to the lecture slides about noise.            
             segment = self.collect_trajectory_segment(start_state)
 
-            # Bootstrapping value and compute advantages and returns.
-            advantages, returns = self.compute_gae_advantages_and_returns(segment)
+            # Advantages and returns computation for the learning phase.
+            advantages, returns = self.gae_advantages_and_returns(segment) \
+                                    if gae_enabled else self.basic_advantages_and_returns(segment)
 
-            # Policy learning phase
+            # Policy learning.
             batcher = Batcher(segment, advantages, returns, n_mini_batches)
             for _ in range(n_update_epochs):
                 for mini_batch in batcher.shuffle():
@@ -106,29 +108,38 @@ class PPO:
         return TrajectorySegment(s_states, s_actions, s_logprobs, s_values,
                                  s_rewards, s_dones, next_start_state=state)
 
-    def compute_gae_advantages_and_returns(self, segment, gamma=0.99, gae_lambda=0.95):
-        with torch.no_grad():
-            # next_value = agent.get_value(next_obs).reshape(1, -1)
-            # next_value = values[-1].reshape(1, -1)
-            next_value = segment.values[-1]
+    @torch.no_grad()
+    def gae_advantages_and_returns(self, segment: TrajectorySegment,
+                                           gamma=0.99, gae_lambda=0.95):
+        lastgaelam = 0
+        advantages = torch.zeros_like(segment.rewards).to(device)
+        next_value = self.agent.get_value(segment.next_start_state).flatten()
 
-            # print(values[-1].shape)
-            # print(values[-1].reshape(1, -1).shape)
-            # print(next_value.shape)
+        for t in reversed(range(len(segment))):
+            next_non_terminal = 1.0 - segment.dones[t]
+            td_error = segment.rewards[t] + (
+                gamma * next_value * next_non_terminal) - segment.values[t]
+            advantages[t] = td_error + gamma * gae_lambda * next_non_terminal * lastgaelam
+            next_value = segment.values[t]
+            lastgaelam = advantages[t]
 
-            advantages = torch.zeros_like(segment.rewards).to(device)
-            lastgaelam = 0
-            num_steps = len(segment.values)
-            for t in reversed(range(num_steps)):
-                if t == num_steps - 1:
-                    nextnonterminal = 1.0 - segment.dones[-1]
-                    nextvalues = next_value
-                else:
-                    nextnonterminal = 1.0 - segment.dones[t + 1]
-                    nextvalues = segment.values[t + 1]
-                delta = segment.rewards[t] + gamma * nextvalues * nextnonterminal - segment.values[t]
-                advantages[t] = lastgaelam = delta + gamma * gae_lambda * nextnonterminal * lastgaelam
-            returns = advantages + segment.values
+        returns = advantages + segment.values
+        return advantages, returns
+
+    @torch.no_grad()
+    def basic_advantages_and_returns(self, segment: TrajectorySegment, gamma=0.99):
+        """Computes returns and advantages for an episode."""
+        returns = torch.zeros_like(segment.rewards).to(device).detach()
+        next_return = self.agent.get_value(segment.next_start_state).flatten()
+
+        for t in reversed(range(len(segment))):
+            next_non_terminal = 1.0 - segment.dones[t]
+            # v(s) = r + discount * v(s+1)
+            returns[t] = segment.rewards[t] + gamma * next_non_terminal * next_return
+            next_return = returns[t]
+
+        # A(s,a) = Q(s,a) - V(s) - https://www.youtube.com/watch?v=vQ_ifavFBkI
+        advantages = returns - segment.values
         return advantages, returns
 
     def next_rollout_size(self) -> int:
@@ -156,43 +167,6 @@ class PPO:
                 print('Reached the maximum number of episodes, terminating...')
                 return True
         return False
-
-    # def advantages_and_returns(self, values, rewards, dones):
-    #     """Computes returns and advantages for an episode.
-
-    #     TODO: Consider implementing GAE here instead.
-    #     """
-    #     last = len(values) - 1 # last returns index
-    #     returns = torch.zeros_like(rewards).to(device).detach()
-    #     with torch.no_grad():
-    #         # Terminal v(s): depending on whether the episode completed or not.
-    #         returns[last] = values[last] * (1 - dones[last])
-    #         # TODO: Maybe instead? :/
-    #         # returns[last_ri] = rewards[last_ri] + GAMMA * values[last_ri] * (1 - dones[last_ri])
-    #         for t in reversed(range(last)):
-    #             # v(s) = r + discount * v(s+1)
-    #             returns[t] = rewards[t] + GAMMA * returns[t+1]
-    #         # A(s,a) = Q(s,a) - V(s)
-    #         # https://www.youtube.com/watch?v=vQ_ifavFBkI
-    #         advantages = returns - values
-    #     # TODO: Check whether normalizing advantages makes a difference, and whether it is more
-    #     #  performant to do so at the mini-batch level instead.
-    #     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-    #     return advantages, returns
-
-        # def compute_returns(self, rewards, dones, values):
-    #     last = len(dones) - 1 # last returns index
-    #     print(f'\tlast: {last}')
-    #     print(f'\trewards: {rewards.shape}')
-    #     print(f'\tdones: {dones.shape}')
-    #     returns = torch.zeros_like(rewards).to(device).detach()
-    #     with torch.no_grad():
-    #         # Terminal v(s): depending on whether the episode completed or not.
-    #         returns[last] = values[last] * (1 - dones[last])
-    #         for t in reversed(range(last)):
-    #             # v(s) = r + discount * v(s+1)
-    #             returns[t] = rewards[t] + GAMMA * (1. - dones[last]) * returns[t+1]
-    #     return returns
 
     def env_reset(self):
         """Reset the environment for a new training episode."""

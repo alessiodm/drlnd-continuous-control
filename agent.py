@@ -81,13 +81,19 @@ class Agent(nn.Module):
         action_std = torch.exp(action_logstd)
         return Normal(action_mean, action_std)
 
-    def learn(self, batch: LearningBatch, entropy_coeff=0.0, clip_coeff=0.1, max_grad_norm=0.75):
+    def learn(self, batch: LearningBatch, entropy_coeff=0.0, clip_coeff=0.1,
+              max_grad_norm=0.75, normalize_advantages=False):
         newlogprobs, entropy = self.eval_action(batch.states, batch.actions)
 
         logratio = newlogprobs - batch.logprobs
         ratio = logratio.exp()
         clipped_ratio = torch.clamp(ratio, 1 - clip_coeff, 1 + clip_coeff)
         advantages = batch.advantages
+
+        # Normalizing the advantages (at the mini-batch level) doesn't seem to improve
+        # the learning process. Just leaving the code for more experiments :)
+        if normalize_advantages:
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         # Policy loss.
         L_entropy = entropy_coeff * entropy.mean()
