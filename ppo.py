@@ -115,7 +115,7 @@ class PPO:
 
     @torch.no_grad()
     def gae_advantages_and_returns(self, segment: TrajectorySegment,
-                                           gamma=0.99, gae_lambda=0.95):
+                                   gamma=0.99, gae_lambda=0.95):
         lastgaelam = 0
         advantages = torch.zeros_like(segment.rewards).to(device)
         next_value = self.agent.get_value(segment.next_start_state).flatten()
@@ -126,7 +126,8 @@ class PPO:
                 gamma * next_value * next_non_terminal) - segment.values[t]
             advantages[t] = td_error + gamma * gae_lambda * next_non_terminal * lastgaelam
             next_value = segment.values[t]
-            lastgaelam = advantages[t]
+            # Reset the lastgaelam if an episode terminates half-way (per bot).
+            lastgaelam = advantages[t] * next_non_terminal
 
         returns = advantages + segment.values
         return advantages, returns
@@ -141,7 +142,7 @@ class PPO:
             next_non_terminal = 1.0 - segment.dones[t]
             # v(s) = r + discount * v(s+1)
             returns[t] = segment.rewards[t] + gamma * next_non_terminal * next_return
-            next_return = returns[t]
+            next_return = returns[t] * next_non_terminal
 
         # A(s,a) = Q(s,a) - V(s) - https://www.youtube.com/watch?v=vQ_ifavFBkI
         advantages = returns - segment.values
