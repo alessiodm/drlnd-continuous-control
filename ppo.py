@@ -1,152 +1,146 @@
 import numpy as np
 import torch
 
-from typing import Tuple
 from unityagents import UnityEnvironment
 
-from agent import Agent, MiniBatch
+from agent import Agent
+from trajectories import Batcher, TrajectorySegment
 
-# TODO: Make these constants configurable
-NUM_EPISODES = 300
-NUM_UPDATE_EPOCHS = 10
-NUM_MINI_BATCHES = 100
-# GAMMA=0.995
-GAMMA=0.99
-GAE_LAMBDA=0.95
-
-ROLLOUT_SIZE=250
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
 class PPO:
     """PPO implementation."""
-    def __init__(self, env: UnityEnvironment, agent: Agent, solved_score = 30.):
-        self.env = env
-        self.agent = agent.to(device)
-        self.solved_score = solved_score
+    def __init__(self, env: UnityEnvironment, agent: Agent,
+                 rollout_sizes = [250, 250, 250, 251], solved_score = 30.):
+        self.env             = env
+        self.agent           = agent.to(device)
+        self.solved_score    = solved_score
         self.brain_name: str = env.brain_names[0]
-        self.brain = self.env.brains[self.brain_name]
-        self.action_size = self.brain.vector_action_space_size
-        env_info = self.env.reset(train_mode=False)[self.brain_name]
-        self.num_bots = len(env_info.agents)
-        states = env_info.vector_observations
-        self.state_size = states.shape[1]
+        self.brain           = self.env.brains[self.brain_name]
+        self.action_size     = self.brain.vector_action_space_size
+        env_info             = self.env.reset(train_mode=False)[self.brain_name]
+        self.num_bots        = len(env_info.agents)
+        states               = env_info.vector_observations
+        self.state_size      = states.shape[1]
+        # TODO: Explain.
+        self.rollout_sizes   = np.array(rollout_sizes)
+        self.episode_len     = self.rollout_sizes.sum()
+        assert self.episode_len == 1001
 
-    def train(self):
-        def flatten(t: Tuple[torch.Tensor, ...]) -> Tuple:
-            return tuple(x.flatten(0, 1) for x in t)
-
+    def train(self, n_update_epochs: int = 10, n_mini_batches: int = 100):
         # Using episodes and max-steps-per-episode have many downsides, see:
         #   https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/
         # We keep this strategy b/c the Udacity project rubric specifically requires
         # averaging all agents per episode for the success criteria.
         n_episode = 1
         scores = torch.zeros((0, self.num_bots))
-        next_states = torch.Tensor(self.env_reset()).to(device)   # get the initial state (for each agent)
+        start_state = torch.Tensor(self.env_reset()).to(device)   # get the initial state (for each agent)
+
         while True:
             # TODO: anneal learning rate?
 
             # Policy rollout phase.
             # Get more trajectories from many agents to reduce noise.
             # TODO: Improve explanation, pointing to the lecture slides about noise.            
-            states, values, actions, logprobs, rewards, dones = self.collect_trajectories(next_states)
-            next_states = states[-1]
-            scores = torch.cat((scores, rewards), 0) # TODO: Weird the first iteration goes up to 1250...
-
-            batch_size = self.num_bots * ROLLOUT_SIZE
-            mini_batch_size = int(batch_size // NUM_MINI_BATCHES)
+            segment = self.collect_trajectory_segment(start_state)
 
             # Bootstrapping value and compute advantages and returns.
-            advantages, returns = self.advantages_and_returns(values, rewards, dones)
-
-            states, values, actions, logprobs, rewards, dones, advantages, returns = flatten(
-                (states, values, actions, logprobs, rewards, dones, advantages, returns))
+            advantages, returns = self.compute_gae_advantages_and_returns(segment)
 
             # Policy learning phase
-            ppo_losses, pg_losses, v_losses, clipfracs = [], [], [], []
-            indices = np.arange(batch_size)
-            for epoch in range(NUM_UPDATE_EPOCHS):
-                np.random.shuffle(indices)
-                for start in range(0, batch_size, mini_batch_size):
-                    end = start + mini_batch_size
-                    inds = indices[start:end]
-                    mini_batch = MiniBatch(states[inds], actions[inds], logprobs[inds],
-                                          advantages[inds], returns[inds])
-                    ppo_loss, pg_loss, v_loss, logratio = self.agent.learn(mini_batch)
+            batcher = Batcher(segment, advantages, returns, n_mini_batches)
 
-                    # Just debug information...
-                    ppo_losses.append(ppo_loss.item())
-                    pg_losses.append(pg_loss.item())
-                    v_losses.append(v_loss.item())
-                    with torch.no_grad():
-                        # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                        old_approx_kl = (-logratio).mean()
-                        approx_kl = ((logratio.exp() - 1) - logratio).mean()
-                        clipfracs += [((logratio.exp() - 1.0).abs() > 0.1).float().mean().item()]
+            for _ in range(n_update_epochs):
+                for mini_batch in batcher.shuffle():
+                    self.agent.learn(mini_batch)
 
-            if np.any(dones.numpy()):
+            start_state = segment.next_start_state
+
+            # Checking scores.
+            scores = torch.cat((scores, segment.rewards), 0)
+            if np.any(segment.dones.flatten(0, 1).numpy()):
                 print(f'Episode n.{n_episode} completed. Avg score: {scores.sum(0).mean()}')
-                print(f'\tppo_loss: {np.mean(ppo_losses)}, pg_loss: {np.mean(pg_losses)}, v_loss: {np.mean(v_losses)}')
-                print(f'\told_approx_kl: {old_approx_kl:.2f}, approx_kl: {approx_kl:.2f}, clipfracs: {np.mean(clipfracs):.2f}')
-                print()
+                assert len(scores) == self.episode_len, f'Episode length of: {len(scores)}?!'
                 n_episode += 1
                 scores = torch.zeros((0, self.num_bots))
-                if n_episode > NUM_EPISODES:
+                if n_episode > 300: # TODO: Fix arbitrary num_episodes=300
                     break
  
-    def collect_trajectories(self, init_states):
+    def collect_trajectory_segment(self, start_state):
         #
         # https://knowledge.udacity.com/questions/558456
         #
-        batch_dim = (ROLLOUT_SIZE, self.num_bots)
+        rollout_size = self._next_rollout_size()
+        batch_dim = (rollout_size, self.num_bots)
 
-        states_list = torch.zeros(batch_dim + (self.state_size,)).to(device)
-        actions_list = torch.zeros(batch_dim + (self.action_size,)).to(device)
-        logprobs_list = torch.zeros(batch_dim).to(device) # TODO: logprobs reduced to single value!!!
-        values_list = torch.zeros(batch_dim).to(device)
-        rewards_list = torch.zeros(batch_dim).to(device)
-        dones_list = torch.zeros(batch_dim).to(device)
+        s_states   = torch.zeros(batch_dim + (self.state_size,)).to(device)
+        s_actions  = torch.zeros(batch_dim + (self.action_size,)).to(device)
+        s_logprobs = torch.zeros(batch_dim).to(device) # TODO: logprobs reduced to single value!!!
+        s_values   = torch.zeros(batch_dim).to(device)
+        s_rewards  = torch.zeros(batch_dim).to(device)
+        s_dones    = torch.zeros(batch_dim).to(device)
 
-        states = init_states
-        for step in range(ROLLOUT_SIZE):
+        state = start_state
+        for step in range(rollout_size):
             # Do not track gradients on policy rollout.
             with torch.no_grad():
-                actions, logprobs = self.agent.sample_action(states)
-                clipped_actions = torch.clamp(actions, -1, 1)   # all actions between -1 and 1
-                values = self.agent.get_value(states)  # (20, 1)
+                action, logprob = self.agent.sample_action(state)
+                clipped_action = torch.clamp(action, -1, 1)   # all actions between -1 and 1
+                value = self.agent.get_value(state)  # (20, 1)
 
             # (20, 33),   (20),    (20)
-            next_states, rewards, dones = self.env_step(clipped_actions.cpu().numpy())
+            next_state, reward, done = self.env_step(clipped_action.cpu().numpy())
 
-            states_list[step] = states
-            actions_list[step] = actions
-            logprobs_list[step] = logprobs
-            values_list[step] = values.flatten()
-            rewards_list[step] = torch.Tensor(rewards).to(device)
-            dones_list[step] = torch.Tensor(dones).to(device)
+            s_states[step]   = state
+            s_actions[step]  = action
+            s_logprobs[step] = logprob
+            s_values[step]   = value.flatten()
+            s_rewards[step]  = torch.Tensor(reward).to(device)
+            s_dones[step]    = torch.Tensor(done).to(device)
 
             # If done, the next_states is gonna be the new state from which to start a new episode.
-            states = torch.Tensor(next_states).to(device)      # roll over states to next time step
-            if np.any(dones):                                  # exit loop if (any) episode finished
-                assert np.all(dones), 'Unexpected environment behavior!'
+            state = torch.Tensor(next_state).to(device)      # roll over states to next time step
+
+            if np.any(done):
+                assert np.all(done), 'Unexpected environment behavior!'
+                assert step == rollout_size - 1, 'Rollouts are not even!'
                 # WE DO NOT BREAK: WE KEEP COLLECTING DATA POINTS.
                 # break
 
-        return states_list, values_list, actions_list, logprobs_list, rewards_list, dones_list
+        return TrajectorySegment(s_states, s_actions, s_logprobs, s_values,
+                                 s_rewards, s_dones, next_start_state=state)
 
-    # def compute_returns(self, rewards, dones, values):
-    #     last = len(dones) - 1 # last returns index
-    #     print(f'\tlast: {last}')
-    #     print(f'\trewards: {rewards.shape}')
-    #     print(f'\tdones: {dones.shape}')
-    #     returns = torch.zeros_like(rewards).to(device).detach()
-    #     with torch.no_grad():
-    #         # Terminal v(s): depending on whether the episode completed or not.
-    #         returns[last] = values[last] * (1 - dones[last])
-    #         for t in reversed(range(last)):
-    #             # v(s) = r + discount * v(s+1)
-    #             returns[t] = rewards[t] + GAMMA * (1. - dones[last]) * returns[t+1]
-    #     return returns
+    def compute_gae_advantages_and_returns(self, segment, gamma=0.99, gae_lambda=0.95):
+        with torch.no_grad():
+            # next_value = agent.get_value(next_obs).reshape(1, -1)
+            # next_value = values[-1].reshape(1, -1)
+            next_value = segment.values[-1]
+
+            # print(values[-1].shape)
+            # print(values[-1].reshape(1, -1).shape)
+            # print(next_value.shape)
+
+            advantages = torch.zeros_like(segment.rewards).to(device)
+            lastgaelam = 0
+            num_steps = len(segment.values)
+            for t in reversed(range(num_steps)):
+                if t == num_steps - 1:
+                    nextnonterminal = 1.0 - segment.dones[-1]
+                    nextvalues = next_value
+                else:
+                    nextnonterminal = 1.0 - segment.dones[t + 1]
+                    nextvalues = segment.values[t + 1]
+                delta = segment.rewards[t] + gamma * nextvalues * nextnonterminal - segment.values[t]
+                advantages[t] = lastgaelam = delta + gamma * gae_lambda * nextnonterminal * lastgaelam
+            returns = advantages + segment.values
+        return advantages, returns
+
+    def _next_rollout_size(self) -> int:
+        rs = self.rollout_sizes[0]
+        self.rollout_sizes = np.roll(self.rollout_sizes, -1)
+        return rs
 
     # def advantages_and_returns(self, values, rewards, dones):
     #     """Computes returns and advantages for an episode.
@@ -171,24 +165,19 @@ class PPO:
     #     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
     #     return advantages, returns
 
-    def advantages_and_returns(self, values, rewards, dones):
-        with torch.no_grad():
-            # next_value = agent.get_value(next_obs).reshape(1, -1)
-            next_value = values[-1].reshape(1, -1)
-            advantages = torch.zeros_like(rewards).to(device)
-            lastgaelam = 0
-            num_steps = len(values)
-            for t in reversed(range(num_steps)):
-                if t == num_steps - 1:
-                    nextnonterminal = 1.0 - dones[-1]
-                    nextvalues = next_value
-                else:
-                    nextnonterminal = 1.0 - dones[t + 1]
-                    nextvalues = values[t + 1]
-                delta = rewards[t] + GAMMA * nextvalues * nextnonterminal - values[t]
-                advantages[t] = lastgaelam = delta + GAMMA * GAE_LAMBDA * nextnonterminal * lastgaelam
-            returns = advantages + values
-        return advantages, returns
+        # def compute_returns(self, rewards, dones, values):
+    #     last = len(dones) - 1 # last returns index
+    #     print(f'\tlast: {last}')
+    #     print(f'\trewards: {rewards.shape}')
+    #     print(f'\tdones: {dones.shape}')
+    #     returns = torch.zeros_like(rewards).to(device).detach()
+    #     with torch.no_grad():
+    #         # Terminal v(s): depending on whether the episode completed or not.
+    #         returns[last] = values[last] * (1 - dones[last])
+    #         for t in reversed(range(last)):
+    #             # v(s) = r + discount * v(s+1)
+    #             returns[t] = rewards[t] + GAMMA * (1. - dones[last]) * returns[t+1]
+    #     return returns
 
     def env_reset(self):
         """Reset the environment for a new training episode."""

@@ -4,12 +4,34 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-from collections import namedtuple
+from dataclasses import dataclass
 from torch.distributions.normal import Normal
 
 
-MiniBatch = namedtuple("MiniBatch", field_names=["states", "actions", "logprobs",
-                                                 "advantages", "returns"])
+@dataclass
+class LearningBatch:
+    states: torch.Tensor
+    actions: torch.Tensor
+    logprobs: torch.Tensor
+    advantages: torch.Tensor
+    returns: torch.Tensor
+
+    def __post_init__(self):
+        length = self.states.shape[0]
+        assert length > 0
+        assert self.actions.shape[0]  == length
+        assert self.logprobs.shape[0] == length
+        assert self.advantages.shape[0]   == length
+        assert self.returns.shape[0]  == length
+
+    def __len__(self):
+        return self.states.shape[0]
+
+    def __getitem__(self, key):
+        return LearningBatch(self.states[key], self.actions[key],
+                           self.logprobs[key], self.advantages[key],
+                           self.returns[key])
+
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     """TODO:"""
@@ -17,6 +39,7 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.constant_(layer.bias, bias_const)
     layer.weight.data.mul_(1e-3) # CRITICAL!
     return layer
+
 
 class Agent(nn.Module):
     def __init__(self, state_size, action_size, lr=2.5e-4):
@@ -56,7 +79,7 @@ class Agent(nn.Module):
         action_std = torch.exp(action_logstd)
         return Normal(action_mean, action_std)
 
-    def learn(self, batch: MiniBatch, entropy_coeff=0.0, clip_coeff=0.1, max_grad_norm=0.75):
+    def learn(self, batch: LearningBatch, entropy_coeff=0.0, clip_coeff=0.1, max_grad_norm=0.75):
         newlogprobs, entropy = self.eval_action(batch.states, batch.actions)
 
         logratio = newlogprobs - batch.logprobs
@@ -90,5 +113,3 @@ class Agent(nn.Module):
         # L_ppo.backward()
         # nn.utils.clip_grad_norm_(self.parameters(), MAX_GRAD_NORM)
         # self.optimizer.step()
-
-        return (torch.Tensor(1), L_actor, L_critic, logratio)
