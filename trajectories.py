@@ -37,7 +37,7 @@ class Batcher:
         self.batch_size = seg.states.shape[0] * seg.states.shape[1]  # rollout_len * num_bots
         self.mini_batch_size = int(self.batch_size // n_mini_batches)
         self.indices = np.arange(self.batch_size)
-        self.experiences = LearningBatch(*Batcher.__flatten(
+        self.experiences = LearningBatch(*Batcher.flatten(
             (seg.states, seg.actions, seg.logprobs, advantages, returns)))
 
     def shuffle(self):
@@ -46,7 +46,7 @@ class Batcher:
         return Batcher._BatchIterator(self.experiences, indices, self.mini_batch_size)
 
     @staticmethod
-    def __flatten(t: Tuple[torch.Tensor, ...]) -> Tuple:
+    def flatten(t: Tuple[torch.Tensor, ...]) -> Tuple:
         """Utility function to flatten a multi-agents / bots trajectory segment.
 
         In particular input tensors have shape (segment_length, num_bots, ...), and they

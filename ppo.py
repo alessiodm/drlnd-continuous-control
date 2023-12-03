@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 
+from typing import List
 from unityagents import UnityEnvironment
 
 from agent import Agent
@@ -12,11 +13,12 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class PPO:
     """PPO implementation."""
-    def __init__(self, env: UnityEnvironment, agent: Agent,
-                 rollout_sizes = [250, 250, 250, 251], solved_score = 30.):
+    def __init__(self, env: UnityEnvironment, agent: Agent, solved_score = 30.0,
+                 rollout_sizes = [250, 250, 250, 251], max_episodes = 314):
         self.env             = env
         self.agent           = agent.to(device)
         self.solved_score    = solved_score
+        self.max_episodes    = max_episodes
         self.brain_name: str = env.brain_names[0]
         self.brain           = self.env.brains[self.brain_name]
         self.action_size     = self.brain.vector_action_space_size
@@ -24,23 +26,20 @@ class PPO:
         self.num_bots        = len(env_info.agents)
         states               = env_info.vector_observations
         self.state_size      = states.shape[1]
+        self.ep_mean_scores  = []
         # TODO: Explain.
         self.rollout_sizes   = np.array(rollout_sizes)
         self.episode_len     = self.rollout_sizes.sum()
         assert self.episode_len == 1001
 
-    def train(self, n_update_epochs: int = 10, n_mini_batches: int = 100):
+    def train(self, n_update_epochs: int = 10, n_mini_batches: int = 100) -> List[float]:
         # Using episodes and max-steps-per-episode have many downsides, see:
         #   https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/
-        # We keep this strategy b/c the Udacity project rubric specifically requires
-        # averaging all agents per episode for the success criteria.
-        n_episode = 1
-        scores = torch.zeros((0, self.num_bots))
+        self.n_episode = 1
+        self.ep_agent_scores = torch.zeros((0, self.num_bots)).detach()
         start_state = torch.Tensor(self.env_reset()).to(device)   # get the initial state (for each agent)
 
         while True:
-            # TODO: anneal learning rate?
-
             # Policy rollout phase.
             # Get more trajectories from many agents to reduce noise.
             # TODO: Improve explanation, pointing to the lecture slides about noise.            
@@ -51,28 +50,24 @@ class PPO:
 
             # Policy learning phase
             batcher = Batcher(segment, advantages, returns, n_mini_batches)
-
             for _ in range(n_update_epochs):
                 for mini_batch in batcher.shuffle():
                     self.agent.learn(mini_batch)
 
-            start_state = segment.next_start_state
+            start_state = segment.next_start_state  # prepare for next rollout
 
-            # Checking scores.
-            scores = torch.cat((scores, segment.rewards), 0)
-            if np.any(segment.dones.flatten(0, 1).numpy()):
-                print(f'Episode n.{n_episode} completed. Avg score: {scores.sum(0).mean()}')
-                assert len(scores) == self.episode_len, f'Episode length of: {len(scores)}?!'
-                n_episode += 1
-                scores = torch.zeros((0, self.num_bots))
-                if n_episode > 300: # TODO: Fix arbitrary num_episodes=300
-                    break
+            # Checking scores and overall episode.
+            self.ep_agent_scores = torch.cat((self.ep_agent_scores, segment.rewards), 0)
+            if self.training_checkpoint(segment):
+                break
+        
+        return self.ep_mean_scores
  
     def collect_trajectory_segment(self, start_state):
         #
         # https://knowledge.udacity.com/questions/558456
         #
-        rollout_size = self._next_rollout_size()
+        rollout_size = self.next_rollout_size()
         batch_dim = (rollout_size, self.num_bots)
 
         s_states   = torch.zeros(batch_dim + (self.state_size,)).to(device)
@@ -106,8 +101,7 @@ class PPO:
             if np.any(done):
                 assert np.all(done), 'Unexpected environment behavior!'
                 assert step == rollout_size - 1, 'Rollouts are not even!'
-                # WE DO NOT BREAK: WE KEEP COLLECTING DATA POINTS.
-                # break
+                # Do not break, continue collecting new trajectory segments instead.
 
         return TrajectorySegment(s_states, s_actions, s_logprobs, s_values,
                                  s_rewards, s_dones, next_start_state=state)
@@ -137,10 +131,31 @@ class PPO:
             returns = advantages + segment.values
         return advantages, returns
 
-    def _next_rollout_size(self) -> int:
+    def next_rollout_size(self) -> int:
         rs = self.rollout_sizes[0]
         self.rollout_sizes = np.roll(self.rollout_sizes, -1)
         return rs
+
+    def training_checkpoint(self, segment: TrajectorySegment) -> bool:
+        # TODO: explain how we can simplify episode_end detection.
+        is_episode_end = np.any(segment.dones.flatten(0, 1).numpy())
+        if is_episode_end:
+            ep_mean_score = self.ep_agent_scores.sum(0).mean().item()
+            self.ep_mean_scores.append(ep_mean_score)
+            print(f'Episode n.{self.n_episode} completed. Avg score: {ep_mean_score}')
+            assert len(self.ep_agent_scores) == self.episode_len, \
+                f'Episode length of: {len(self.ep_agent_scores)}?!'
+            self.n_episode += 1
+            self.ep_agent_scores = torch.zeros((0, self.num_bots))
+            # Check for environment solved
+            episodes_100_mean = np.mean(self.ep_mean_scores[-100:])
+            if episodes_100_mean > self.solved_score:
+                print(f'Reacher environment solved! 100 episodes score: {episodes_100_mean}')
+                return True
+            if self.n_episode > self.max_episodes:
+                print('Reached the maximum number of episodes, terminating...')
+                return True
+        return False
 
     # def advantages_and_returns(self, values, rewards, dones):
     #     """Computes returns and advantages for an episode.

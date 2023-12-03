@@ -11,8 +11,6 @@ from unityagents import UnityEnvironment
 from agent import Agent
 from ppo import PPO
 
-from ppoc import PPOC
-
 
 class ReacherWorld:
     """A world full of reachers!

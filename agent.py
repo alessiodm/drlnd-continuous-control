@@ -33,17 +33,17 @@ class LearningBatch:
                            self.returns[key])
 
 
-def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
-    """TODO:"""
-    torch.nn.init.orthogonal_(layer.weight, std)
-    torch.nn.init.constant_(layer.bias, bias_const)
-    layer.weight.data.mul_(1e-3) # CRITICAL!
-    return layer
-
-
 class Agent(nn.Module):
-    def __init__(self, state_size, action_size, lr=2.5e-4):
+    def __init__(self, state_size, action_size, lr=2.5e-4, weight_mul=1e-3):
         super().__init__()
+
+        def layer_init(layer, std=np.sqrt(2)):
+            """TODO:"""
+            torch.nn.init.orthogonal_(layer.weight, std)
+            torch.nn.init.constant_(layer.bias, 0.0)
+            layer.weight.data.mul_(weight_mul) # CRITICAL!
+            return layer
+
         self.critic = nn.Sequential(
             layer_init(nn.Linear(state_size, 32)),
             nn.Tanh(),
@@ -51,6 +51,7 @@ class Agent(nn.Module):
             nn.Tanh(),
             layer_init(nn.Linear(32, 1), std=1.0),
         )
+
         self.actor_mean = nn.Sequential(
             layer_init(nn.Linear(state_size, 32)),
             nn.Tanh(),
@@ -58,6 +59,7 @@ class Agent(nn.Module):
             nn.Tanh(),
             layer_init(nn.Linear(32, action_size), std=0.01),
         )
+
         self.actor_logstd = nn.Parameter(torch.zeros(1, action_size))
         self.optimizer = optim.Adam(self.parameters(), lr=lr, eps=1e-5)
 
