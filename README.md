@@ -2,6 +2,10 @@
 
 Continuous-control project for the Udacity deep reinforcement learning nano-degree.
 
+<div>
+  <img src="reacher_solved.png" width="500"/>
+</div>
+
 ## Getting Started
 
 The instructions below are intended only for Linux environments.
