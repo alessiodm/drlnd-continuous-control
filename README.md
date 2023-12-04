@@ -92,10 +92,12 @@ episodes, and over all 20 agents) of at least `+30`.
 
 ## Resources
 
- * Udacity PPO lecture and code
- * Udacity actor-critic lectures and DDPG code
- * Hugging Face Deep RL course
- * Costa Huang (https://costa.sh/)
-   * https://github.com/vwxyzjn/cleanrl
-   * https://youtu.be/MEt6rrxH8W4
-   * https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/
+In order to implement the PPO algorithm, I used various resources:
+
+ * Udacity nano-degree lectures, first and foremost
+ * Hugging Face [Deep RL course](https://huggingface.co/learn/deep-rl-course)
+ * Original [PPO paper](https://arxiv.org/abs/1707.06347)
+ * CleanRL [implementation](https://github.com/vwxyzjn/cleanrl) and its very well-written analysis
+   that can be [found here](https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/).
+   This project implementation differs from the CleanRL one in various aspects though (e.g., PPO loss,
+   training loop, code structure, etc.)
