@@ -58,12 +58,11 @@ class Agent(nn.Module):
         def layer_init(layer, std=np.sqrt(2)):
             """Layer initialization for the neural-netowork linear layers.
 
-            Scaling the weights turns out to be *critical* for the current network architecture
-            to be able to learn effectively given the state / action values of the environment.
+            Scaling the weights might affect learning speed.
             """
             torch.nn.init.orthogonal_(layer.weight, std)
             torch.nn.init.constant_(layer.bias, 0.0)
-            layer.weight.data.mul_(weight_mul) # CRITICAL!
+            layer.weight.data.mul_(weight_mul)
             return layer
 
         # Critic network
