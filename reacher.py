@@ -49,34 +49,35 @@ class ReacherWorld:
         print()
 
     def simulate(self, agent: Agent):
+        """Simulate the environment for a given agent"""
         env = self.env
         brain_name = self.brain_name
-        env_info = env.reset(train_mode=False)[brain_name]     # reset the environment    
-        states = torch.Tensor(env_info.vector_observations)    # get the current state (for each agent)
-        scores = np.zeros(self.num_agents)                     # initialize the score (for each agent)
+        env_info = env.reset(train_mode=False)[brain_name]    # reset the environment    
+        states = torch.Tensor(env_info.vector_observations)   # get current state (for each bot)
+        scores = np.zeros(self.num_agents)                    # initialize score (for each bot)
         while True:
-            actions, _ = agent.sample_action(states)           # select an action (for each agent)
-            actions = torch.clamp(actions, -1, 1).numpy()      # all actions between -1 and 1
-            env_info = env.step(actions)[brain_name]           # send all actions to tne environment
-            next_states = env_info.vector_observations         # get next state (for each agent)
-            dones = env_info.local_done                        # see if episode finished
-            scores += env_info.rewards                         # update the score (for each agent)
-            states = torch.Tensor(next_states)                 # roll over states to next time step
-            if np.any(dones):                                  # exit loop if episode finished
+            actions, _ = agent.sample_action(states)          # select an action (for each bot)
+            actions = torch.clamp(actions, -1, 1).numpy()     # all actions between -1 and 1
+            env_info = env.step(actions)[brain_name]          # send all actions to tne environment
+            next_states = env_info.vector_observations        # get next state (for each bot)
+            dones = env_info.local_done                       # see if episode finished
+            scores += env_info.rewards                        # update the score (for each bot)
+            states = torch.Tensor(next_states)                # roll over states to next time step
+            if np.any(dones):                                 # exit loop if episode finished
                 break
         print('Total score (averaged over agents) this episode: {}'.format(np.mean(scores)))
 
     def train(self, agent: Agent, max_episodes=314, n_update_epochs=10,
               n_mini_batches=100, gae_enabled=True):
-        """Train a PPO agent in the reacher world."""
+        """Train a PPO agent in the Reacher world."""
         ppo = PPO(self.env, agent, max_episodes=max_episodes)
         scores = ppo.train(n_update_epochs, n_mini_batches, gae_enabled, self.persist)
         return scores
 
     def new_agent(self, weight_mul=1e-3, preload_file=None):
-        """Create a new raw agent for the reacher world.
+        """Create a new raw agent for the Reacher world.
 
-        Shortcut and convenient method to create agents tailored to the reacher world environment.
+        Shortcut and convenient method to create agents tailored to the Reacher world environment.
         """
         return Agent(self.state_size, self.action_size,
                      weight_mul=weight_mul, preload_file=preload_file)
@@ -94,7 +95,7 @@ def parse_args():
         default=False,
         nargs="?",
         const=True,
-        help="if toggled, run the banana world in training mode",
+        help="if toggled, run the world in training mode",
     )
     parser.add_argument(
         "--simulation",
@@ -102,7 +103,7 @@ def parse_args():
         default="",
         nargs="?",
         const="pretrained",
-        help="if toggled, run a banana world simulation (use the suffix to select it)",
+        help="if toggled, run a world simulation (use the suffix to select it)",
     )
     args = parser.parse_args()
     return args
