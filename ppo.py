@@ -197,19 +197,23 @@ class PPO:
         if is_episode_end:
             ep_mean_score = self.ep_agent_scores.sum(0).mean().item()
             self.ep_mean_scores.append(ep_mean_score)
-            print(f'Episode n.{self.n_episode} completed. Avg score: {ep_mean_score}')
+            if self.n_episode % 10 == 0:
+                print(f'\rEpisode n.{self.n_episode} completed. Avg score: {ep_mean_score}')
+            else:
+                print(f'\rEpisode n.{self.n_episode} completed. Avg score: {ep_mean_score}', end="")
             assert len(self.ep_agent_scores) == self.episode_len, \
                 f'Episode length of: {len(self.ep_agent_scores)}?!'
-            self.n_episode += 1
-            self.ep_agent_scores = torch.zeros((0, self.num_bots))
             # Check for environment solved
             episodes_100_mean = np.mean(self.ep_mean_scores[-100:])
             if episodes_100_mean > self.solved_score:
-                print(f'Reacher environment solved! 100 episodes score: {episodes_100_mean}')
+                print(f'\rReacher environment solved at episode {self.n_episode}! ' +
+                      f'100 episodes score: {episodes_100_mean}')
                 return True
-            if self.n_episode > self.max_episodes:
-                print('Reached the maximum number of episodes, terminating...')
+            if self.n_episode == self.max_episodes:
+                print('\rReached the maximum number of episodes, terminating...')
                 return True
+            self.n_episode += 1
+            self.ep_agent_scores = torch.zeros((0, self.num_bots))
         return False
 
     def env_reset(self):
