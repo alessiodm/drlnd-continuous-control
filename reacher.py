@@ -16,7 +16,7 @@ class ReacherWorld:
     """A world full of reachers!
     
     This class encapsulates the Unity Reacher environment provided by Udacity for the deep-learning
-    nanodegree continuous control project. It instantiates the Unity environment, allowing to train
+    nanodegree continuous-control project. It instantiates the Unity environment, allowing to train
     and simulate an agent via PPO.
     """
 

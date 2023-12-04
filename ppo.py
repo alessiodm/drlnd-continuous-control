@@ -183,6 +183,7 @@ class PPO:
         self.rollout_sizes = np.roll(self.rollout_sizes, -1)
         return rs
 
+    @torch.no_grad()
     def training_checkpoint(self, segment: TrajectorySegment) -> bool:
         """Check whether an episode is completed and determines whether to terminate training.
 
